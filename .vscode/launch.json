@@ -1,0 +1,11 @@
+{
+    "configurations": [
+        {
+            "name": "AsaGym",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "example.py",
+            "console": "integratedTerminal"
+        },
+    ]
+}
