@@ -5,8 +5,9 @@ import pathlib
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
-from subprocess import Popen
-from typing import Dict, Optional
+from subprocess import Popen, DEVNULL
+from typing import Dict, List, Optional, Tuple
+from logging import Logger
 
 import gymnasium as gym
 import numpy as np
@@ -15,10 +16,13 @@ import zmq
 from gymnasium.spaces import Space
 
 import asagym.proto.simulator_pb2 as pb
-from asagym.utils.communication import (recv_message_from_simulation,
-                                        send_message_to_simulation)
+from asagym.utils.communication import (
+    recv_message_from_simulation,
+    send_message_to_simulation,
+)
 from asagym.utils.drawing import SCREEN_HEIGHT, SCREEN_WIDTH
 from asagym.utils.logger import new_logger
+from asagym.utils.preprocessing import merge_observations
 from asagym.utils.simulation import Simulation
 
 
@@ -29,6 +33,7 @@ class BaseAsaEnv(gym.Env, ABC):
 
     def __init__(
         self,
+        simu_path: pathlib.Path,
         base_path: pathlib.Path,
         observation_space: Space,
         action_space: Space,
@@ -42,6 +47,9 @@ class BaseAsaEnv(gym.Env, ABC):
 
         if not base_path.is_dir():
             raise OSError(f"File {base_path.absolute()} is not a directory")
+
+        # save scenario edl file
+        self.simu_path = simu_path
 
         # setting class logger
         log_path = base_path.joinpath(f"./var/log/AsaGym/{rank}")
@@ -61,7 +69,9 @@ class BaseAsaEnv(gym.Env, ABC):
         if self.render_mode is not None:
             self._graphics = Simulation()
 
-        self._logger.info(f"Instantiating an environment using base path: {self.base_path}")
+        self._logger.info(
+            f"Instantiating an environment using base path: {self.base_path}"
+        )
 
         self.rank = rank  # the id of the execution instance (many in parallel)
         self.own_id = 0  # the id of the player being controlled
@@ -70,7 +80,7 @@ class BaseAsaEnv(gym.Env, ABC):
 
         self.node = None
 
-        self._last_state = pb.State()
+        self._summary = pb.Summary()
 
         # gymnasium environment variables
         self._logger.debug(f"ASA env with Obervation Space: {observation_space}")
@@ -80,16 +90,20 @@ class BaseAsaEnv(gym.Env, ABC):
 
         # stablishing communication with the underlying simulator
         self.context = zmq.Context()
-        url = "asa-gym:" + str(self.rank)
+        url = "127.0.0.1:" + str(8000 + self.rank)
         self.socket = self.context.socket(zmq.REQ)
-        self.socket.connect("ipc://" + url)
+        self.socket.connect("tcp://" + url)
 
     @property
-    def logger(self):
+    def logger(self) -> Logger:
         return self._logger
 
+    @property
+    def summary(self):
+        return self._summary
+
     def reset(self, *, seed: int = None, options: Optional[dict] = None) -> tuple:
-        super().reset(seed=seed)
+        super().reset(seed=seed, options=options)
 
         if self.node is not None:
             # attempt clean shutdown underlying simulator
@@ -97,29 +111,46 @@ class BaseAsaEnv(gym.Env, ABC):
             self._close_simulation()
 
         # starts the underlying simulator
-        self._initialize_simulation()
+        num_players, init_data = self.reset_init()
 
-        init_data = self._reset_init()
-        simulation_state = self._reset_simulation(init_data)
+        self._initialize_simulation(num_players)
+
+        self._summary = pb.Summary()
+        states = self._reset_simulation(init_data)
+        self._summary = merge_observations(states, self._summary)
 
         if self.render_mode is not None:
-            self._graphics.reset(simulation_state)
+            self._graphics.reset(self._summary)
 
         self._save_recording()
 
         # a new episode has ended
         self.step_counter = 0
         self.episode_counter += 1
-        self._last_state = pb.State()
 
-        self.own_id = simulation_state.id
+        self.own_id = states[0].owner.player_state.id
 
-        observation = self._get_obs(simulation_state)
-        info = self._get_info(simulation_state)
+        # a callback to be used to reset/initialize subclasses
+        self.reset_callback(states)
+
+        observation = self.get_obs(states)
+        info = self.get_info(states)
 
         return observation, info
 
-    def _initialize_simulation(self):
+    def _initialize_simulation(self, num_players: int):
+        # loading scenario edl file
+        self._logger.info(f"Using scenario: {self.simu_path.absolute()}")
+        with open(self.simu_path, "r") as file:
+            scenario = file.read()
+
+        exec_uuid = uuid.uuid4()
+
+        # Store execution uuid
+        self.uuid = exec_uuid
+
+        scenario = scenario.replace("!EXEC_UUID!", str(exec_uuid))
+
         # running the underlying simulator process
         if self.use_docker:
             # inside docker
@@ -132,9 +163,21 @@ class BaseAsaEnv(gym.Env, ABC):
             cwd_path = self.base_path.joinpath("./bin")
             exe_path = self.base_path.joinpath("./bin/AsaWrapper.sh")
 
+            data_path = self.base_path.joinpath(
+                f"./var/data/executions/{exec_uuid}/gym.log"
+            )
+
             env = os.environ.copy()
             self.node = Popen(
-                ["bash", exe_path, "./AsaGym", f"--id={self.rank}", f"--uuid={uuid.uuid4()}"],
+                [
+                    "bash",
+                    exe_path,
+                    "./AsaGym",
+                    f"--id={self.rank}",
+                    f"--uuid={exec_uuid}",
+                ],
+                stdout=DEVNULL,  # TODO: pipe this to somewhere
+                stderr=DEVNULL,  # TODO: pipe this to somewhere
                 cwd=cwd_path,
                 env=env,
                 shell=False,
@@ -144,11 +187,13 @@ class BaseAsaEnv(gym.Env, ABC):
 
         # sending the Init request
         request = pb.InitRequest()
+        request.edl = scenario
+        request.num_players = num_players
         send_message_to_simulation(self.socket, request)
         # receive the Init reply
         _ = recv_message_from_simulation(self.socket, pb.INIT)
 
-    def _reset_simulation(self, options: Optional[dict]) -> pb.State:
+    def _reset_simulation(self, options: Optional[dict]) -> List[pb.State]:
         # sending the Reset request
         request = pb.ResetRequest()
 
@@ -158,51 +203,40 @@ class BaseAsaEnv(gym.Env, ABC):
         send_message_to_simulation(self.socket, request)
         # receive the Reset reply
         reply = recv_message_from_simulation(self.socket, pb.RESET)
-        return reply.state
-
-    def _merge_obs(self, curr_obs: pb.State, new_obs: pb.State) -> pb.State:
-        merged_obs = pb.State()
-        merged_obs.MergeFrom(new_obs)
-        if len(merged_obs.foes) == 0:
-            if len(curr_obs.foes) == 0:
-                self._logger.warning("curr_obs.foes is empty: this REALLY should not be happening!")
-                merged_obs.foes.append(pb.FoeState())
-            else:
-                merged_obs.foes.append(curr_obs.foes[0])
-        return merged_obs
+        return reply.states
 
     def step(self, action) -> tuple:
         # incrementing step counter
         self.step_counter += 1
 
         # high level action => low level action
-        sim_action = self._get_action(action)
+        sim_action = self.get_action(action)
 
         # forwards the step to the simulator
-        new_state = self._step_simulation(sim_action)
-        sim_state = self._merge_obs(self._last_state, new_state)
+        sim_state = self._step_simulation(sim_action)
+        self._summary = merge_observations(sim_state, self._summary)
 
         if self.render_mode is not None:
-            self._graphics.update(sim_state)
+            self._graphics.update(self._summary)
 
         # low level state => high level observations
-        observation = self._get_obs(sim_state)
-        terminated = self._get_termination(sim_state)
-        reward = self._get_reward(sim_state)
-        info = self._get_info(sim_state)
+        observation = self.get_obs(sim_state)
+        terminated = self.get_termination(sim_state)
+        reward = self.get_reward(sim_state, terminated)
+        info = self.get_info(sim_state)
 
         self._last_state = sim_state
 
         return observation, reward, terminated, False, info
 
-    def _step_simulation(self, action: pb.Action) -> pb.State:
+    def _step_simulation(self, actions: List[pb.Action]) -> List[pb.State]:
         # sending the Step request
-        request = pb.StepRequest(action=action)
+        request = pb.StepRequest(actions=actions)
         send_message_to_simulation(self.socket, request)
 
         # receive the Step reply
         reply = recv_message_from_simulation(self.socket, pb.STEP)
-        return reply.state
+        return reply.states
 
     def _close_simulation(self) -> None:
         # stop simulation process
@@ -238,35 +272,37 @@ class BaseAsaEnv(gym.Env, ABC):
         canvas.fill((255, 255, 255))
 
         self._graphics.draw(canvas)
-        return np.transpose(
-            np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
-        )
-
+        return np.transpose(np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2))
 
     # -------------------
     # methods to override
     # -------------------
 
+    def reset_callback(self, simulation_state: List[pb.State]) -> None:
+        pass
+
     @abstractmethod
-    def _reset_init(self) -> Optional[Dict]:
+    def reset_init(self) -> Tuple[int, Optional[Dict]]:
         raise NotImplementedError
 
     @abstractmethod
-    def _get_action(self, action) -> pb.Action:
+    def get_action(self, action) -> List[pb.Action]:
         return NotImplementedError
 
     @abstractmethod
-    def _get_info(self, simulation_state: pb.State) -> Optional[Dict]:
+    def get_info(self, simulation_state: List[pb.State]) -> Optional[Dict]:
         return NotImplementedError
 
     @abstractmethod
-    def _get_obs(self, simulation_state: pb.State) -> Space:
+    def get_obs(self, simulation_state: List[pb.State]) -> Space:
         raise NotImplementedError
 
     @abstractmethod
-    def _get_termination(self, simulation_state: pb.State) -> bool:
+    def get_termination(self, simulation_state: List[pb.State]) -> bool:
         raise NotImplementedError
 
     @abstractmethod
-    def _get_reward(self, simulation_state: pb.State) -> float:
+    def get_reward(
+        self, simulation_state: pb.State | List[pb.State], done: bool
+    ) -> float:
         raise NotImplementedError

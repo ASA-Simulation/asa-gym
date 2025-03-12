@@ -1,12 +1,11 @@
-from typing import Any
+from collections import OrderedDict
 from copy import deepcopy
 
 import numpy as np
-
 from gymnasium import ObservationWrapper
+from gymnasium.spaces import Box, Dict, Space
 
-from collections import OrderedDict
-from gymnasium.spaces import Dict, Box
+import asagym.proto.simulator_pb2 as pb
 
 
 class RelativePosition(ObservationWrapper):
@@ -26,6 +25,10 @@ class RelativePosition(ObservationWrapper):
                 )
             }
         )
+
+    def get_obs(self, simulation_state: pb.State) -> Space:
+        obs = self.env.get_obs(simulation_state)
+        return self.observation(obs)
 
     def observation(self, observation: Dict) -> Dict:
         fighter_state: Dict = observation["owner"]["player_state"]

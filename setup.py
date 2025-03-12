@@ -39,6 +39,8 @@ setup(
     version=get_version(),
     description="Gymnasium environments for RL training using ASA as a simulator",
     long_description=get_description(),
+    maintainer="Adrisson Samersla",
+    maintainer_email="adrissonsamersla@proton.me",
     packages=find_packages(include=["asagym"]),
     package_data={"asagym": ["asagym/assets/*"]},
     install_requires=[
@@ -46,6 +48,7 @@ setup(
         "grpcio-tools==1.53.0",
         "gymnasium==0.28.1",
         "pygame==2.5.1",
+        "numpy==1.26.4",
     ],
     include_package_data=True,
 )

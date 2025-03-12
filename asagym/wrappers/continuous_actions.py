@@ -5,6 +5,7 @@ from gymnasium import ActionWrapper
 from gymnasium.spaces import Box
 from collections import OrderedDict
 
+
 class ContinuousActions(ActionWrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
@@ -14,12 +15,12 @@ class ContinuousActions(ActionWrapper):
     def action(self, action: Box) -> OrderedDict:
         actions = OrderedDict(
             {
-                "heading": np.array([action[0]],dtype=np.float32),
-                "load_factor": np.array([action[1]],dtype=np.float32),
-                "altitude": np.array([action[2]],dtype=np.float32),
-                "base_altitude": np.array([action[3]],dtype=np.float32),
-                "pitch": np.array([action[4]],dtype=np.float32),
-                "airspeed": np.array([action[5]],dtype=np.float32),
+                "heading": np.array([action[0]], dtype=np.float32),
+                "load_factor": np.array([action[1]], dtype=np.float32),
+                "altitude": np.array([action[2]], dtype=np.float32),
+                "base_altitude": np.array([action[3]], dtype=np.float32),
+                "pitch": np.array([action[4]], dtype=np.float32),
+                "airspeed": np.array([action[5]], dtype=np.float32),
             }
         )
         return actions

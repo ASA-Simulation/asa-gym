@@ -1,6 +1,6 @@
 import logging
 from collections import OrderedDict
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 from google.protobuf.json_format import MessageToDict
@@ -12,15 +12,16 @@ from asagym.utils.logger import fork_logger
 
 
 class BeyondVisualRangeEnv(BaseAsaEnv):
-    """
-    """
+    """Scenario: 1 RL x 1 BT"""
 
     def __init__(
         self,
-        reward: Callable[[pb.State],float],
-        **kwargs
+        reward: Callable[[pb.State], float],
+        initialization: Callable[[], Optional[dict]],
+        **kwargs,
     ):
         self._reward_func = reward
+        self._initialization_func = initialization
 
         observation_space = Dict(
             {
@@ -93,37 +94,10 @@ class BeyondVisualRangeEnv(BaseAsaEnv):
 
         self.last_obs = None
 
-    def _reset_init(self) -> Optional[dict]:
-        init_lat = -16.9486272 - 0.1
-        init_long = -48.2672957 - 0.1
-        init_heading = np.random.rand() * 360.0 
+    def reset_init(self) -> Tuple[int, Optional[dict]]:
+        return 1, self._initialization_func()
 
-        data = {
-            "players": {
-                "B01@Jambock_1": {
-                    "attributes": {
-                        "initLatitude": 10.0,
-                        "initLongitude": -10.0,
-                    }
-                },
-                "Blue_HQ": {
-                    "subcomponents": {
-                        "taskOrders": {
-                            "Blue_ATO_1": {
-                                "attributes": {
-                                    "initLat": init_lat,
-                                    "initLon": init_long,
-                                    "initHeading": init_heading,
-                                }
-                            }
-                        }
-                    }
-                },
-            }
-        }
-        return data
-
-    def _get_action(self, action: Dict) -> pb.Action:
+    def get_action(self, action: Dict) -> List[pb.Action]:
         action = pb.Action(
             id=self.own_id,
             heading=action["heading"][0],
@@ -133,25 +107,28 @@ class BeyondVisualRangeEnv(BaseAsaEnv):
             pitch=action["pitch"][0],
             airspeed=action["airspeed"][0],
         )
-        if self._logger.isEnabledFor(logging.DEBUG):
-            self._logger.debug(f"Action: {MessageToDict(action)}")
-        return action
+        self._logger.debug(f"Action: {MessageToDict(action)}")
+        return [action]
 
-    def _get_info(self, simulation_state: pb.State) -> Optional[Dict]:
+    def get_info(self, states: List[pb.State]) -> Optional[Dict]:
+        assert len(states) == 1
+        state = states[0]
+
         info = {
-            "exec_time": simulation_state.exec_time,
+            "exec_time": state.exec_time,
             "step_count": self.step_counter,
-            "end_of_episode": simulation_state.end_of_episode,
+            "end_of_episode": state.end_of_episode,
         }
-        if self._logger.isEnabledFor(logging.DEBUG):
-            self._logger.debug(f"Information: {info}")
+        self._logger.debug(f"Information: {info}")
         return info
 
-    def _get_obs(self, simulation_state: pb.State) -> Space:
-        if len(simulation_state.foes) == 0:
-            simulation_state["foes"] = [dict(self.last_obs["foe"])]
+    def get_obs(self, states: List[pb.State]) -> Space:
+        assert len(states) == 1
+        state = states[0]
 
-        simulation_state.owner.player_state.heading
+        # foes field may be empty
+        if len(state.foes) == 0:
+            state["foes"] = [dict(self.last_obs["foe"])]
 
         obs = OrderedDict(
             {
@@ -160,31 +137,27 @@ class BeyondVisualRangeEnv(BaseAsaEnv):
                         "player_state": OrderedDict(
                             {
                                 "latitude": np.squeeze(
-                                    np.array([simulation_state.owner.player_state.latitude])
+                                    np.array([state.owner.player_state.latitude])
                                 ),
                                 "longitude": np.squeeze(
-                                    np.array([simulation_state.owner.player_state.longitude])
+                                    np.array([state.owner.player_state.longitude])
                                 ),
                                 "altitude": np.squeeze(
-                                    np.array([simulation_state.owner.player_state.altitude])
+                                    np.array([state.owner.player_state.altitude])
                                 ),
                                 "heading": np.squeeze(
-                                    np.array([simulation_state.owner.player_state.heading])
+                                    np.array([state.owner.player_state.heading])
                                 ),
                                 "airspeed": np.squeeze(
-                                    np.array([simulation_state.owner.player_state.airspeed])
+                                    np.array([state.owner.player_state.airspeed])
                                 ),
                             }
                         ),
                         "base_altitude": np.squeeze(
-                            np.array([simulation_state.owner.base_altitude])
+                            np.array([state.owner.base_altitude])
                         ),
-                        "fuel_amount": np.squeeze(
-                            np.array([simulation_state.owner.fuel_amount])
-                        ),
-                        "num_msl": np.squeeze(
-                            np.array([simulation_state.owner.num_msl])
-                        ),
+                        "fuel_amount": np.squeeze(np.array([state.owner.fuel_amount])),
+                        "num_msl": np.squeeze(np.array([state.owner.num_msl])),
                     }
                 ),
                 "foe": OrderedDict(
@@ -192,60 +165,60 @@ class BeyondVisualRangeEnv(BaseAsaEnv):
                         "player_state": OrderedDict(
                             {
                                 "latitude": np.squeeze(
-                                    np.array([simulation_state.foes[0].player_state.latitude])
+                                    np.array([state.foes[0].player_state.latitude])
                                 ),
                                 "longitude": np.squeeze(
-                                    np.array([simulation_state.foes[0].player_state.longitude])
+                                    np.array([state.foes[0].player_state.longitude])
                                 ),
                                 "altitude": np.squeeze(
-                                    np.array([simulation_state.foes[0].player_state.altitude])
+                                    np.array([state.foes[0].player_state.altitude])
                                 ),
                                 "heading": np.squeeze(
-                                    np.array([simulation_state.foes[0].player_state.heading])
+                                    np.array([state.foes[0].player_state.heading])
                                 ),
                                 "airspeed": np.squeeze(
-                                    np.array([simulation_state.foes[0].player_state.airspeed])
+                                    np.array([state.foes[0].player_state.airspeed])
                                 ),
                             }
                         ),
-                        "true_azmth": np.squeeze(
-                            np.array([simulation_state.foes[0].true_azmth])
-                        ),
-                        "rel_azmth": np.squeeze(
-                            np.array([simulation_state.foes[0].rel_azmth])
-                        ),
-                        "range": np.squeeze(
-                            np.array([simulation_state.foes[0].range])
-                        ),
+                        "true_azmth": np.squeeze(np.array([state.foes[0].true_azmth])),
+                        "rel_azmth": np.squeeze(np.array([state.foes[0].rel_azmth])),
+                        "range": np.squeeze(np.array([state.foes[0].range])),
                         "wez_own2foe_max": np.squeeze(
-                            np.array([simulation_state.foes[0].wez_own2foe_max])
+                            np.array([state.foes[0].wez_own2foe_max])
                         ),
                         "wez_own2foe_nez": np.squeeze(
-                            np.array([simulation_state.foes[0].wez_own2foe_nez])
+                            np.array([state.foes[0].wez_own2foe_nez])
                         ),
                         "wez_foe2own_max": np.squeeze(
-                            np.array([simulation_state.foes[0].wez_foe2own_max])
+                            np.array([state.foes[0].wez_foe2own_max])
                         ),
                         "wez_foe2own_nez": np.squeeze(
-                            np.array([simulation_state.foes[0].wez_foe2own_nez])
+                            np.array([state.foes[0].wez_foe2own_nez])
                         ),
                     }
                 ),
             }
         )
         self.last_obs = obs
-        if self._logger.isEnabledFor(logging.DEBUG):
-            self._logger.debug(f"Observation: {obs}")
+        self._logger.debug(f"Observation: {obs}")
         return obs
 
-    def _get_termination(self, simulation_state: pb.State) -> bool:
-        termination = len(simulation_state.end_of_episode) > 0
-        if self._logger.isEnabledFor(logging.DEBUG):
-            self._logger.debug(f"Termination: '{simulation_state.end_of_episode}' => {termination}")
-        return termination
+    def get_termination(self, states: List[pb.State]) -> bool:
+        eoe = False
+        for state in states:
+            termination = len(state.end_of_episode) > 0
+            self._logger.debug(
+                f"Termination: '{state.end_of_episode}' => {termination}"
+            )
+            eoe |= termination
+        return eoe
 
-    def _get_reward(self, simulation_state: pb.State) -> float:
-        reward = self._reward_func(simulation_state)
+    def get_reward(self, states: List[pb.State]) -> float:
+        assert len(states) == 1
+        state = states[0]
+
+        reward = self._reward_func(state)
         if self._logger.isEnabledFor(logging.DEBUG):
             self._logger.debug(f"Reward: {reward}")
         return reward

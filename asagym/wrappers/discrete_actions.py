@@ -80,5 +80,7 @@ class DiscreteActions(ActionWrapper):
         )
         return discrete_actions[action]
 
-    def step(self, action: Any) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
+    def step(
+        self, action: Any
+    ) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
         return super().step(action)

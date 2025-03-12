@@ -5,99 +5,110 @@ import "google/protobuf/any.proto";
 package asa.gym.proto;
 
 message Action {
-    int32   id            = 1;
-    // Dynamic action
-    double  heading       = 2;  // [deg] [-180, 180]
-    double  load_factor   = 3;  // [g]   [1, ...]
-    double  altitude      = 4;  // [m]   [0, ...]
-    double  base_altitude = 5;  // [m]   [0, ...]
-    double  pitch         = 6;  // [deg] [-90, 90]
-    double  airspeed      = 7;  // [m/s] [0, ...]
+  int32 id = 1;
+  // Dynamic action
+  double heading = 2;       // [deg] [-180, 180]
+  double load_factor = 3;   // [g]   [1, ...]
+  double altitude = 4;      // [m]   [0, ...]
+  double base_altitude = 5; // [m]   [0, ...]
+  double pitch = 6;         // [deg] [-90, 90]
+  double airspeed = 7;      // [m/s] [0, ...]
+}
+
+enum Side {
+  BLUE = 0;   // Blue force
+  RED = 1;    // Red force
+  YELLOW = 2; // 3rd force
+  CYAN = 3;   // 4th force
+  GRAY = 4;   // Neutral force
+  WHITE = 5;  // Commercial/Civilian
 }
 
 message PlayerState {
-    double latitude   = 1; // [deg] [-90, 90]
-    double longitude  = 2; // [deg] [-180, 180]
-    double altitude   = 3; // [m]   [0, ...]
-    double heading    = 4; // [deg] [-180, 180]
-    double airspeed   = 5; // [m/s] [0, ...]
+  int32 id = 1;
+  double latitude = 2;  // [deg] [-90, 90]
+  double longitude = 3; // [deg] [-180, 180]
+  double altitude = 4;  // [m]   [0, ...]
+  double heading = 5;   // [deg] [-180, 180]
+  double airspeed = 6;  // [m/s] [0, ...]
 }
 
 message WingState {
-    PlayerState  player_state     = 1;
-    int32        tgt_id           = 2; // [-1, ...] (-1 means wingman has no target)
-    bool         is_engaged       = 3;
-    bool         is_defending     = 4;
+  PlayerState player_state = 1;
+  int32 tgt_id = 2; // [-1, ...] (-1 means wingman has no target)
+  bool is_engaged = 3;
+  bool is_defending = 4;
 }
 
 message OwnState {
-    PlayerState  player_state    = 1;
-    double       base_altitude   = 2; // [m]   [0, ...]
-    double       fuel_amount     = 3; // [lbs] [0, ...]
-    int32        num_msl         = 4; //       [0, ...]  (number of missiles)
-    int32        tgt_id          = 5; //       [-1, ...] (-1 means agent has no target)
+  PlayerState player_state = 1;
+  double base_altitude = 2; // [m]   [0, ...]
+  double fuel_amount = 3;   // [lbs] [0, ...]
+  int32 num_msl = 4;        //       [0, ...]  (number of missiles)
+  int32 tgt_id = 5;         //       [-1, ...] (-1 means agent has no target)
 }
 
 message FoeState {
-    PlayerState  player_state      = 1;
-    double       true_azmth        = 2;  // [deg] [-180, 180] (ned referenced)
-    double       rel_azmth         = 3;  // [deg] [-180, 180] (ownship referenced)
-    double       range             = 4;  // [m] (wez = weapon engagement zone)
-    double       wez_own2foe_max   = 5;  // [m]
-    double       wez_own2foe_nez   = 6;  // [m]
-    double       wez_foe2own_max   = 7;  // [m]
-    double       wez_foe2own_nez   = 8;  // [m]
-    bool         is_active_emitter = 9;  // (is the foe an active radar emitter?)
-    string       emitter_mode      = 10; // ["scan", "tracking", "scan_tracking"]
+  PlayerState player_state = 1;
+  double true_azmth = 2;      // [deg] [-180, 180] (ned referenced)
+  double rel_azmth = 3;       // [deg] [-180, 180] (ownship referenced)
+  double range = 4;           // [m] (wez = weapon engagement zone)
+  double wez_own2foe_max = 5; // [m]
+  double wez_own2foe_nez = 6; // [m]
+  double wez_foe2own_max = 7; // [m]
+  double wez_foe2own_nez = 8; // [m]
+  bool is_active_emitter = 9; // (is the foe an active radar emitter?)
+  string emitter_mode = 10;   // ["scan", "tracking", "scan_tracking"]
 }
 
 message State {
-    int32             id                = 1;
-    double            exec_time         = 2; // [s] execution time
-    OwnState          owner             = 3;
-    WingState         wing              = 4;
-    repeated FoeState foes              = 5;
-    string            end_of_episode    = 6; // [collision_avoidance, return_to_game_area, return_to_territory,
-                                             //  return_to_base, return_to_faor, return_to_cap, break,
-                                             //  threat_reaction,  run_away_threat, missile_shot]
+  int32 id = 1;
+  Side side = 2;
+  double exec_time = 3; // [s] execution time
+  OwnState owner = 4;
+  WingState wing = 5;
+  repeated FoeState foes = 6;
+  string end_of_episode =
+      7; // [collision_avoidance, return_to_game_area, return_to_territory,
+         //  return_to_base, return_to_faor, return_to_cap, break,
+         //  threat_reaction,  run_away_threat, missile_shot]
+  bool active = 8;
 }
 
 enum MessageType {
-    INIT = 0;
-    RESET = 1;
-    STEP = 2;
-    CLOSE = 3;
+  INIT = 0;
+  RESET = 1;
+  STEP = 2;
+  CLOSE = 3;
 }
 
-message RequestMessage {
-    google.protobuf.Any payload = 2;
-}
+message RequestMessage { google.protobuf.Any payload = 2; }
 
-message ResponseMessage {
-    google.protobuf.Any payload = 2;
-}
+message ResponseMessage { google.protobuf.Any payload = 2; }
 
-message InitRequest {}
+message InitRequest {
+  string edl = 1;
+  int32 num_players = 2;
+}
 
 message InitResponse {}
 
 message ResetRequest {
-    int32 seed = 1;
-    string data = 2;
+  int32 seed = 1;
+  string data = 2;
 }
 
-message ResetResponse {
-    State state     =   1;
-}
+message ResetResponse { repeated State states = 1; }
 
-message StepRequest {
-    Action action   =   1;
-}
+message StepRequest { repeated Action actions = 1; }
 
-message StepResponse {
-    State state     =   1;
-}
+message StepResponse { repeated State states = 1; }
 
 message CloseRequest {}
 
 message CloseResponse {}
+
+message Summary {
+  map<int32, PlayerState> own_team = 1;
+  map<int32, PlayerState> ene_team = 2;
+}
